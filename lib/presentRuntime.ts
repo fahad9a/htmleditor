@@ -1,4 +1,5 @@
 import type { TransitionCfg } from "./types";
+import { insertBeforeBodyClose } from "./editorRuntime";
 
 // Injected into the document for presentation/preview mode. Detects slides
 // (same heuristics as the editor runtime), shows one at a time and applies
@@ -81,6 +82,5 @@ export function injectPresentRuntime(html: string, cfg: TransitionCfg): string {
     PRESENT_SOURCE.replace("__VHE_CFG__", JSON.stringify(cfg)) +
     "</" +
     "script>";
-  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, script + "</body>");
-  return html + script;
+  return insertBeforeBodyClose(html, script);
 }

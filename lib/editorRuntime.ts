@@ -330,8 +330,22 @@ const RUNTIME_SOURCE = String.raw`
 `;
 
 /**
+ * Insert a script tag right before the closing </body> of a document.
+ *
+ * Important: we use the LAST occurrence, not the first — documents that embed
+ * JS libraries (e.g. SheetJS) can contain the literal string "</body>" inside
+ * their script code, and injecting there would corrupt both scripts. String
+ * slicing (not String.replace) also avoids "$"-pattern substitution quirks.
+ */
+export function insertBeforeBodyClose(html: string, script: string): string {
+  const idx = html.toLowerCase().lastIndexOf("</body>");
+  if (idx === -1) return html + script;
+  return html.slice(0, idx) + script + html.slice(idx);
+}
+
+/**
  * Inject the editor runtime into an uploaded HTML document.
- * The original markup is left untouched — we only append a script tag.
+ * The original markup is left untouched — we only add a script tag.
  */
 export function injectEditorRuntime(html: string, token: string): string {
   const script =
@@ -339,8 +353,7 @@ export function injectEditorRuntime(html: string, token: string): string {
     RUNTIME_SOURCE.replace("__VHE_TOKEN__", token) +
     "</" +
     "script>";
-  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, script + "</body>");
-  return html + script;
+  return insertBeforeBodyClose(html, script);
 }
 
 export function makeToken(): string {
