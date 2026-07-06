@@ -52,16 +52,16 @@ function LoginForm() {
     <main className="min-h-screen flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <Link href="/" className="flex items-center justify-center gap-2 font-bold text-xl mb-8">
-          <span className="text-brand-600">▦</span> ReportCanvas
+          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white text-sm">▦</span> ReportCanvas
         </Link>
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="flex rounded-lg bg-gray-100 p-1 mb-6 text-sm font-medium">
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex rounded-lg bg-slate-100 p-1 mb-6 text-sm font-medium">
             {(["login", "signup"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
                 className={`flex-1 rounded-md py-1.5 ${
-                  mode === m ? "bg-white shadow text-gray-900" : "text-gray-500"
+                  mode === m ? "bg-white shadow text-slate-900" : "text-slate-500"
                 }`}
               >
                 {m === "login" ? "Log in" : "Sign up"}

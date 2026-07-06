@@ -89,14 +89,14 @@ export default function ShareModal({ projectId, initialMembers, me, myRole, onCl
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+        className="w-full max-w-md card p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <h2 className="font-bold">Share project</h2>
-          <button className="text-gray-400 hover:text-gray-900" onClick={onClose}>✕</button>
+          <h2 className="font-bold text-lg">Share project</h2>
+          <button className="btn-icon" onClick={onClose}>✕</button>
         </div>
 
         {isOwner && (

@@ -1,58 +1,46 @@
-// The "editor runtime" is a vanilla-JS script injected into the uploaded HTML
-// before it is rendered inside a sandboxed iframe. It turns the document into
-// a click-to-edit surface and talks to the editor shell via postMessage.
+// ============================================================================
+// Editor runtime v2 — patch/overlay architecture.
 //
-// Security model: the iframe is sandboxed with allow-scripts only (opaque
-// origin), so the uploaded document cannot touch our app's origin, cookies or
-// Supabase session. Every message is tagged with a per-mount random token that
-// both sides verify.
+// The uploaded HTML is IMMUTABLE. Every edit is a small operation ("op") with
+// a computed inverse (for undo). Ops are replayed on load, broadcast live to
+// collaborators, and persisted as a compact JSON list — the original document
+// is never rewritten, so embedded report scripts (charts, tables) keep
+// working exactly as authored.
+//
+// The runtime script is injected before the LAST </body> and boots
+// SYNCHRONOUSLY at parse time. That means element IDs are assigned to the
+// authored/static DOM *before* the report's own DOMContentLoaded scripts
+// generate content — so IDs are deterministic across sessions and clients,
+// and script-generated content (which regenerates every load) is deliberately
+// not directly editable (clicks select its authored container instead).
+//
+// Security: the iframe is sandboxed (allow-scripts, opaque origin); all
+// postMessage traffic carries a per-mount random token verified on both ends.
+// ============================================================================
 
-const RUNTIME_SOURCE = String.raw`
-(function () {
-  var TOKEN = "__VHE_TOKEN__";
-  var selectedId = null;
-
-  function post(msg) {
-    msg.token = TOKEN;
-    parent.postMessage(msg, "*");
-  }
-
-  // ---------- id assignment ----------
-  function assignIds() {
-    var n = 0;
-    document.body.setAttribute("data-vhe-id", "vhe-body");
-    var all = document.body.getElementsByTagName("*");
-    for (var i = 0; i < all.length; i++) {
-      var el = all[i];
-      if (el.id === "__vhe_style") continue;
-      el.setAttribute("data-vhe-id", "vhe-" + n++);
-    }
-  }
-
+// ---------- shared prelude: ids + op application (used by editor & preview) ----------
+const PRELUDE = String.raw`
+  var counter = 0;
   function byId(id) {
     if (id === "vhe-body") return document.body;
     return document.querySelector('[data-vhe-id="' + id + '"]');
   }
-
-  // ---------- editor chrome styles ----------
-  function injectStyle() {
-    var s = document.createElement("style");
-    s.id = "__vhe_style";
-    s.textContent =
-      "[data-vhe-id]:hover{outline:1px dashed rgba(59,130,246,.6)!important;outline-offset:-1px;}" +
-      ".__vhe-sel{outline:2px solid #3b82f6!important;outline-offset:-2px;}" +
-      ".__vhe-remote{outline:2px solid var(--vhe-rc,#f59e0b)!important;outline-offset:-2px;}" +
-      "[data-vhe-hidden]{display:revert!important;opacity:.3!important;outline:1px dashed #ef4444!important;}" +
-      "body{cursor:default;}";
-    document.head.appendChild(s);
+  // Assign ids only to elements that don't have one yet (stable, monotonic).
+  function ensureIds() {
+    if (!document.body.getAttribute("data-vhe-id"))
+      document.body.setAttribute("data-vhe-id", "vhe-body");
+    var all = document.body.getElementsByTagName("*");
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (el.id === "__vhe_style" || el.id === "__vhe_runtime" || el.id === "__vhe_present") continue;
+      if (!el.getAttribute("data-vhe-id")) el.setAttribute("data-vhe-id", "vhe-" + counter++);
+    }
   }
-
-  // ---------- slide detection ----------
-  // Heuristics, in priority order:
-  //  1. elements explicitly marked with data-vhe-slide
-  //  2. <section> elements that are direct children of body
-  //  3. elements whose class name contains "slide"
-  // Reports without slide structure fall back to a single "Document" entry.
+  function stripIds(root) {
+    root.removeAttribute("data-vhe-id");
+    var all = root.getElementsByTagName("*");
+    for (var i = 0; i < all.length; i++) all[i].removeAttribute("data-vhe-id");
+  }
   function findSlides() {
     var els = [].slice.call(document.querySelectorAll("[data-vhe-slide]"));
     if (!els.length) els = [].slice.call(document.querySelectorAll("body > section"));
@@ -64,12 +52,146 @@ const RUNTIME_SOURCE = String.raw`
     }
     return els;
   }
-
   function slideName(el, i) {
     if (el.getAttribute("data-vhe-name")) return el.getAttribute("data-vhe-name");
     var h = el.querySelector("h1,h2,h3,h4");
     var t = h ? (h.textContent || "").trim() : "";
     return t ? t.slice(0, 40) : "Slide " + (i + 1);
+  }
+  // Apply one op to the DOM. Returns the inverse op (or null if it no-oped).
+  function applyOp(o) {
+    var el, inv = null, parent, idx, tmp, node, slides, other;
+    if (o.op === "style") {
+      el = byId(o.id);
+      if (!el) return null;
+      inv = { op: "style", id: o.id, prop: o.prop, value: el.style[o.prop] || "" };
+      el.style[o.prop] = o.value;
+    } else if (o.op === "text") {
+      el = byId(o.id);
+      if (!el || el.children.length > 0) return null;
+      inv = { op: "text", id: o.id, value: el.textContent || "" };
+      el.textContent = o.value;
+    } else if (o.op === "attr") {
+      el = byId(o.id);
+      if (!el) return null;
+      inv = { op: "attr", id: o.id, name: o.name, value: el.getAttribute(o.name) || "" };
+      if (o.value) el.setAttribute(o.name, o.value);
+      else el.removeAttribute(o.name);
+    } else if (o.op === "hide") {
+      el = byId(o.id);
+      if (!el) return null;
+      inv = { op: "hide", id: o.id, on: !o.on };
+      if (o.on) el.setAttribute("data-vhe-hidden", "1");
+      else el.removeAttribute("data-vhe-hidden");
+    } else if (o.op === "remove") {
+      el = byId(o.id);
+      if (!el || el === document.body || !el.parentNode) return null;
+      parent = el.parentNode;
+      if (parent.nodeType === 1 && !parent.getAttribute("data-vhe-id")) ensureIds();
+      idx = Array.prototype.indexOf.call(parent.children, el);
+      inv = {
+        op: "restore",
+        parentId: parent === document.body ? "vhe-body" : parent.getAttribute("data-vhe-id"),
+        index: idx,
+        html: el.outerHTML
+      };
+      parent.removeChild(el);
+    } else if (o.op === "restore") {
+      parent = byId(o.parentId);
+      if (!parent) return null;
+      tmp = document.createElement("div");
+      tmp.innerHTML = o.html;
+      node = tmp.firstElementChild;
+      if (!node) return null;
+      parent.insertBefore(node, parent.children[o.index] || null);
+      ensureIds();
+      inv = { op: "remove", id: node.getAttribute("data-vhe-id") };
+    } else if (o.op === "slide") {
+      if (o.sub === "rename") {
+        el = byId(o.id);
+        if (!el) return null;
+        inv = { op: "slide", sub: "rename", id: o.id, name: el.getAttribute("data-vhe-name") || "" };
+        if (o.name) el.setAttribute("data-vhe-name", o.name);
+        else el.removeAttribute("data-vhe-name");
+      } else if (o.sub === "mark") {
+        el = byId(o.id);
+        if (!el) return null;
+        inv = { op: "slide", sub: "mark", id: o.id, on: !o.on };
+        if (o.on) el.setAttribute("data-vhe-slide", "1");
+        else el.removeAttribute("data-vhe-slide");
+      } else if (o.sub === "dup") {
+        el = byId(o.id);
+        if (!el || el === document.body) return null;
+        node = el.cloneNode(true);
+        stripIds(node);
+        node.removeAttribute("data-vhe-hidden");
+        el.parentNode.insertBefore(node, el.nextSibling);
+        ensureIds();
+        inv = { op: "remove", id: node.getAttribute("data-vhe-id") };
+      } else if (o.sub === "add") {
+        slides = findSlides();
+        if (slides.length && slides[0] !== document.body) {
+          node = slides[slides.length - 1].cloneNode(false);
+          stripIds(node);
+          node.innerHTML = "<h2>New slide</h2><p>Double-click any text to edit it.</p>";
+          el = slides[slides.length - 1];
+          el.parentNode.insertBefore(node, el.nextSibling);
+        } else {
+          node = document.createElement("section");
+          node.setAttribute("data-vhe-slide", "1");
+          node.style.padding = "48px";
+          node.innerHTML = "<h2>New section</h2><p>Double-click any text to edit it.</p>";
+          document.body.appendChild(node);
+        }
+        ensureIds();
+        inv = { op: "remove", id: node.getAttribute("data-vhe-id") };
+      } else if (o.sub === "up" || o.sub === "down") {
+        el = byId(o.id);
+        if (!el) return null;
+        slides = findSlides();
+        idx = slides.indexOf(el);
+        if (o.sub === "up" && idx > 0) {
+          other = slides[idx - 1];
+          other.parentNode.insertBefore(el, other);
+          inv = { op: "slide", sub: "down", id: o.id };
+        } else if (o.sub === "down" && idx > -1 && idx < slides.length - 1) {
+          other = slides[idx + 1];
+          other.parentNode.insertBefore(el, other.nextSibling);
+          inv = { op: "slide", sub: "up", id: o.id };
+        } else return null;
+      }
+    }
+    return inv;
+  }
+  function isStructural(o) {
+    return o.op === "remove" || o.op === "restore" || o.op === "slide";
+  }
+`;
+
+// ---------- editor runtime ----------
+const EDITOR_SOURCE = String.raw`
+(function () {
+  var TOKEN = "__VHE_TOKEN__";
+  var selectedId = null;
+  var canEdit = true;
+
+  ${"__PRELUDE__"}
+
+  function post(msg) {
+    msg.token = TOKEN;
+    parent.postMessage(msg, "*");
+  }
+
+  function injectStyle() {
+    var s = document.createElement("style");
+    s.id = "__vhe_style";
+    s.textContent =
+      "[data-vhe-id]:hover{outline:1px dashed rgba(99,102,241,.65)!important;outline-offset:-1px;}" +
+      ".__vhe-sel{outline:2px solid #6366f1!important;outline-offset:-2px;}" +
+      ".__vhe-remote{outline:2px solid var(--vhe-rc,#f59e0b)!important;outline-offset:-2px;}" +
+      "[data-vhe-hidden]{opacity:.3!important;outline:1px dashed #ef4444!important;}" +
+      "[contenteditable=true]{outline:2px solid #10b981!important;outline-offset:-2px;cursor:text;}";
+    document.head.appendChild(s);
   }
 
   function sendSlides() {
@@ -82,38 +204,44 @@ const RUNTIME_SOURCE = String.raw`
       t: "slides",
       slides: slides.map(function (el, i) {
         return { id: el.getAttribute("data-vhe-id"), name: slideName(el, i) };
-      }),
+      })
     });
   }
 
-  // ---------- selection ----------
   function describe(el) {
     var cs = getComputedStyle(el);
     var hasChildEls = el.children.length > 0;
+    var path = [];
+    var p = el;
+    while (p && p !== document.documentElement && path.length < 5) {
+      if (p.getAttribute("data-vhe-id"))
+        path.unshift({ id: p.getAttribute("data-vhe-id"), tag: p.tagName.toLowerCase() });
+      p = p.parentElement;
+    }
     return {
       id: el.getAttribute("data-vhe-id"),
       tag: el.tagName.toLowerCase(),
       text: hasChildEls ? "" : el.textContent || "",
       canText: !hasChildEls,
       hidden: el.hasAttribute("data-vhe-hidden"),
+      path: path,
       styles: {
         color: cs.color,
         backgroundColor: cs.backgroundColor,
         fontSize: cs.fontSize,
         fontWeight: cs.fontWeight,
-        fontFamily: cs.fontFamily,
         textAlign: cs.textAlign,
         padding: cs.paddingTop,
         margin: cs.marginTop,
         borderRadius: cs.borderRadius,
         borderWidth: cs.borderTopWidth,
-        borderColor: cs.borderTopColor,
+        borderColor: cs.borderTopColor
       },
       attrs: {
         src: el.getAttribute("src") || "",
         href: el.getAttribute("href") || "",
-        alt: el.getAttribute("alt") || "",
-      },
+        alt: el.getAttribute("alt") || ""
+      }
     };
   }
 
@@ -133,175 +261,128 @@ const RUNTIME_SOURCE = String.raw`
   function refreshSelected() {
     var el = selectedId ? byId(selectedId) : null;
     if (el) post({ t: "selected", el: describe(el) });
+    else if (selectedId) { selectedId = null; post({ t: "selected", el: null }); }
   }
-
-  function changed(structural) {
-    post({ t: "changed" });
-    if (structural) sendSlides();
-  }
-
-  // ---------- event wiring ----------
-  document.addEventListener(
-    "click",
-    function (e) {
-      var t = e.target;
-      if (t && t.isContentEditable) return; // allow clicks while inline-editing
-      e.preventDefault();
-      e.stopPropagation();
-      var el = t && t.closest ? t.closest("[data-vhe-id]") : null;
-      select(el);
-    },
-    true
-  );
-
-  document.addEventListener(
-    "dblclick",
-    function (e) {
-      var el = e.target && e.target.closest ? e.target.closest("[data-vhe-id]") : null;
-      if (!el || el.children.length > 0) return;
-      e.preventDefault();
-      el.setAttribute("contenteditable", "true");
-      el.focus();
-      var done = function () {
-        el.removeAttribute("contenteditable");
-        el.removeEventListener("blur", done);
-        refreshSelected();
-        changed(false);
-      };
-      el.addEventListener("blur", done);
-    },
-    true
-  );
-
-  document.addEventListener("submit", function (e) { e.preventDefault(); }, true);
-
-  var scrollTimer = null;
-  window.addEventListener("scroll", function () {
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(function () {
-      post({ t: "scroll", y: window.scrollY });
-    }, 200);
-  });
 
   // ---------- serialization ----------
-  function serialize() {
+  function serialize(print) {
     var clone = document.documentElement.cloneNode(true);
-    var kill = clone.querySelectorAll("#__vhe_style, #__vhe_runtime");
-    for (var i = 0; i < kill.length; i++) kill[i].parentNode.removeChild(kill[i]);
+    var i, kill = clone.querySelectorAll("#__vhe_style, #__vhe_runtime");
+    for (i = 0; i < kill.length; i++) kill[i].parentNode.removeChild(kill[i]);
+    if (print) {
+      // Freeze canvases into images and drop scripts so the file prints
+      // correctly without re-running report code.
+      var liveCanvases = document.querySelectorAll("canvas");
+      var cloneCanvases = clone.querySelectorAll("canvas");
+      for (i = 0; i < cloneCanvases.length; i++) {
+        try {
+          var img = document.createElement("img");
+          img.src = liveCanvases[i].toDataURL("image/png");
+          img.style.cssText = "width:" + liveCanvases[i].offsetWidth + "px;height:auto;";
+          cloneCanvases[i].parentNode.replaceChild(img, cloneCanvases[i]);
+        } catch (e) {}
+      }
+      var scripts = clone.querySelectorAll("script");
+      for (i = 0; i < scripts.length; i++) scripts[i].parentNode.removeChild(scripts[i]);
+    }
     var els = clone.querySelectorAll("[data-vhe-id]");
-    for (var j = 0; j < els.length; j++) {
-      var el = els[j];
+    for (i = 0; i < els.length; i++) {
+      var el = els[i];
       el.removeAttribute("data-vhe-id");
       el.removeAttribute("contenteditable");
       el.classList.remove("__vhe-sel");
       el.classList.remove("__vhe-remote");
       if (!el.getAttribute("class")) el.removeAttribute("class");
-      // Hidden elements are faded in the editor but truly hidden on export.
-      if (el.hasAttribute("data-vhe-hidden")) el.style.display = "none";
+      if (el.hasAttribute("data-vhe-hidden")) {
+        el.removeAttribute("data-vhe-hidden");
+        el.style.display = "none";
+      }
     }
     return "<!DOCTYPE html>\n" + clone.outerHTML;
   }
 
-  // ---------- slide operations ----------
-  function slideOp(op, id, name) {
-    var el = id ? byId(id) : null;
-    if (op === "mark" && el) {
-      if (el.hasAttribute("data-vhe-slide")) el.removeAttribute("data-vhe-slide");
-      else el.setAttribute("data-vhe-slide", "1");
-    } else if (op === "rename" && el) {
-      el.setAttribute("data-vhe-name", name || "");
-    } else if (op === "del" && el && el !== document.body) {
-      el.parentNode.removeChild(el);
-      select(null);
-    } else if (op === "dup" && el && el !== document.body) {
-      var copy = el.cloneNode(true);
-      copy.classList.remove("__vhe-sel");
-      el.parentNode.insertBefore(copy, el.nextSibling);
-      assignIds();
-    } else if ((op === "up" || op === "down") && el && el !== document.body) {
-      var slides = findSlides();
-      var idx = slides.indexOf(el);
-      if (op === "up" && idx > 0) {
-        slides[idx - 1].parentNode.insertBefore(el, slides[idx - 1]);
-      } else if (op === "down" && idx > -1 && idx < slides.length - 1) {
-        var after = slides[idx + 1];
-        after.parentNode.insertBefore(el, after.nextSibling);
+  // ---------- events ----------
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (t && t.isContentEditable) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var el = t && t.closest ? t.closest("[data-vhe-id]") : null;
+    select(el);
+  }, true);
+
+  document.addEventListener("dblclick", function (e) {
+    if (!canEdit) return;
+    var el = e.target && e.target.closest ? e.target.closest("[data-vhe-id]") : null;
+    if (!el || el.children.length > 0) return;
+    e.preventDefault();
+    var before = el.textContent || "";
+    el.setAttribute("contenteditable", "true");
+    el.focus();
+    var done = function () {
+      el.removeAttribute("contenteditable");
+      el.removeEventListener("blur", done);
+      var after = el.textContent || "";
+      if (after !== before) {
+        post({
+          t: "applied",
+          op: { op: "text", id: el.getAttribute("data-vhe-id"), value: after },
+          inverse: { op: "text", id: el.getAttribute("data-vhe-id"), value: before },
+          meta: { origin: "local" }
+        });
       }
-    } else if (op === "add") {
-      var slidesNow = findSlides();
-      var fresh;
-      if (slidesNow.length && slidesNow[0] !== document.body) {
-        // Clone the last slide's shell to inherit the deck's styling.
-        fresh = slidesNow[slidesNow.length - 1].cloneNode(false);
-        fresh.innerHTML = "<h2>New slide</h2><p>Double-click any text to edit it.</p>";
-        var last = slidesNow[slidesNow.length - 1];
-        last.parentNode.insertBefore(fresh, last.nextSibling);
-      } else {
-        fresh = document.createElement("section");
-        fresh.setAttribute("data-vhe-slide", "1");
-        fresh.style.padding = "48px";
-        fresh.innerHTML = "<h2>New section</h2><p>Double-click any text to edit it.</p>";
-        document.body.appendChild(fresh);
+      refreshSelected();
+    };
+    el.addEventListener("blur", done);
+  }, true);
+
+  document.addEventListener("submit", function (e) { e.preventDefault(); }, true);
+
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && !e.target.isContentEditable) {
+      var k = e.key.toLowerCase();
+      if (k === "z" || k === "y" || k === "s") {
+        e.preventDefault();
+        post({ t: "key", k: k, shift: e.shiftKey });
       }
-      assignIds();
     }
-    changed(true);
-  }
+  });
+
+  var scrollTimer = null;
+  window.addEventListener("scroll", function () {
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(function () { post({ t: "scroll", y: window.scrollY }); }, 200);
+  });
 
   // ---------- inbound messages ----------
   window.addEventListener("message", function (e) {
     var m = e.data;
     if (!m || m.token !== TOKEN) return;
-    var el;
-    if (m.t === "style") {
-      el = byId(m.id);
-      if (el) {
-        el.style[m.prop] = m.value;
+    if (m.t === "init") {
+      canEdit = m.canEdit !== false;
+      var ps = m.patches || [];
+      for (var i = 0; i < ps.length; i++) {
+        try { applyOp(ps[i]); } catch (err) {}
+      }
+      sendSlides();
+      post({ t: "inited", applied: ps.length });
+    } else if (m.t === "op") {
+      var inv = applyOp(m.o);
+      if (inv !== null) {
+        post({ t: "applied", op: m.o, inverse: inv, meta: m.meta || {} });
+        if (isStructural(m.o)) { sendSlides(); }
         refreshSelected();
-        changed(false);
       }
-    } else if (m.t === "text") {
-      el = byId(m.id);
-      if (el && el.children.length === 0) {
-        el.textContent = m.value;
-        changed(false);
-      }
-    } else if (m.t === "attr") {
-      el = byId(m.id);
-      if (el) {
-        if (m.value) el.setAttribute(m.name, m.value);
-        else el.removeAttribute(m.name);
-        changed(false);
-      }
-    } else if (m.t === "hide") {
-      el = byId(m.id);
-      if (el) {
-        if (el.hasAttribute("data-vhe-hidden")) {
-          el.removeAttribute("data-vhe-hidden");
-          el.style.display = "";
-        } else {
-          el.setAttribute("data-vhe-hidden", "1");
-        }
-        refreshSelected();
-        changed(false);
-      }
-    } else if (m.t === "remove") {
-      el = byId(m.id);
-      if (el && el !== document.body) {
-        el.parentNode.removeChild(el);
-        select(null);
-        changed(true);
-      }
-    } else if (m.t === "slide") {
-      slideOp(m.op, m.id, m.name);
+    } else if (m.t === "select") {
+      select(byId(m.id));
     } else if (m.t === "focusSlide") {
-      el = byId(m.id);
+      var el = byId(m.id);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     } else if (m.t === "getHtml") {
-      post({ t: "html", html: serialize(), reqId: m.reqId });
+      post({ t: "html", html: serialize(!!m.print), reqId: m.reqId });
     } else if (m.t === "remoteSel") {
       var olds = document.querySelectorAll(".__vhe-remote");
-      for (var i = 0; i < olds.length; i++) olds[i].classList.remove("__vhe-remote");
+      for (var j = 0; j < olds.length; j++) olds[j].classList.remove("__vhe-remote");
       (m.sels || []).forEach(function (s) {
         var rel = byId(s.id);
         if (rel) {
@@ -314,28 +395,18 @@ const RUNTIME_SOURCE = String.raw`
     }
   });
 
-  // ---------- boot ----------
-  function boot() {
-    injectStyle();
-    assignIds();
-    sendSlides();
-    post({ t: "ready" });
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
-  }
+  // ---------- boot (synchronous: before the report's own init scripts) ----------
+  injectStyle();
+  ensureIds();
+  post({ t: "ready" });
 })();
 `;
 
 /**
  * Insert a script tag right before the closing </body> of a document.
- *
- * Important: we use the LAST occurrence, not the first — documents that embed
- * JS libraries (e.g. SheetJS) can contain the literal string "</body>" inside
- * their script code, and injecting there would corrupt both scripts. String
- * slicing (not String.replace) also avoids "$"-pattern substitution quirks.
+ * Uses the LAST occurrence — embedded JS libraries (e.g. SheetJS) contain the
+ * literal string "</body>" inside their code, and injecting at the first
+ * match would corrupt them. String slicing avoids String.replace "$" quirks.
  */
 export function insertBeforeBodyClose(html: string, script: string): string {
   const idx = html.toLowerCase().lastIndexOf("</body>");
@@ -343,19 +414,18 @@ export function insertBeforeBodyClose(html: string, script: string): string {
   return html.slice(0, idx) + script + html.slice(idx);
 }
 
-/**
- * Inject the editor runtime into an uploaded HTML document.
- * The original markup is left untouched — we only add a script tag.
- */
+export function buildEditorRuntime(token: string): string {
+  return EDITOR_SOURCE.replace("__PRELUDE__", () => PRELUDE).replace("__VHE_TOKEN__", token);
+}
+
+/** Inject the editor runtime into an uploaded HTML document. */
 export function injectEditorRuntime(html: string, token: string): string {
-  const script =
-    '<script id="__vhe_runtime">' +
-    RUNTIME_SOURCE.replace("__VHE_TOKEN__", token) +
-    "</" +
-    "script>";
+  const script = '<script id="__vhe_runtime">' + buildEditorRuntime(token) + "</" + "script>";
   return insertBeforeBodyClose(html, script);
 }
 
 export function makeToken(): string {
   return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 }
+
+export { PRELUDE };

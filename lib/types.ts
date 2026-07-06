@@ -27,16 +27,33 @@ export interface DocumentRow {
   project_id: string;
   title: string;
   html_content: string;
+  patches: PatchOp[];
   transitions: TransitionCfg;
   created_at: string;
   updated_at: string;
   updated_by: string | null;
 }
 
+// One edit operation. The original HTML is immutable; the document's state is
+// html_content + patches replayed in order.
+export interface PatchOp {
+  op: "style" | "text" | "attr" | "hide" | "remove" | "restore" | "slide";
+  id?: string;
+  prop?: string;
+  value?: string;
+  name?: string;
+  on?: boolean;
+  sub?: "add" | "dup" | "del" | "up" | "down" | "rename" | "mark";
+  parentId?: string;
+  index?: number;
+  html?: string;
+}
+
 export interface VersionRow {
   id: string;
   document_id: string;
   html_content: string;
+  patches: PatchOp[];
   label: string;
   created_by: string | null;
   created_at: string;
@@ -55,6 +72,7 @@ export interface SelectedEl {
   text: string;
   canText: boolean;
   hidden: boolean;
+  path: { id: string; tag: string }[];
   styles: Record<string, string>;
   attrs: Record<string, string>;
 }

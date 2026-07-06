@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import SignOutButton from "@/components/SignOutButton";
+import ProjectCard, { type ProjectCardData } from "@/components/dashboard/ProjectCard";
+import DemoButton from "@/components/dashboard/DemoButton";
 import { initials, userColor } from "@/lib/colors";
 
 export const dynamic = "force-dynamic";
@@ -35,41 +37,35 @@ export default async function Dashboard() {
     .eq("user_id", user.id);
 
   const memberships = ((data as unknown as Membership[]) ?? []).filter((m) => m.projects);
-  const mine = memberships.filter((m) => m.projects!.owner_id === user.id);
-  const shared = memberships.filter((m) => m.projects!.owner_id !== user.id);
+  const toCard = (m: Membership): ProjectCardData => {
+    const p = m.projects!;
+    const doc = p.documents?.[0];
+    return {
+      projectId: p.id,
+      docId: doc?.id ?? null,
+      name: p.name,
+      docTitle: doc?.title ?? "No document",
+      role: m.role,
+      updatedAt: doc?.updated_at ?? null,
+      isOwner: p.owner_id === user.id,
+    };
+  };
+  const sortByDate = (a: ProjectCardData, b: ProjectCardData) =>
+    (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+  const mine = memberships.filter((m) => m.projects!.owner_id === user.id).map(toCard).sort(sortByDate);
+  const shared = memberships.filter((m) => m.projects!.owner_id !== user.id).map(toCard).sort(sortByDate);
 
   const name = profile?.full_name || profile?.email || "You";
 
-  function Card({ m }: { m: Membership }) {
-    const p = m.projects!;
-    const doc = p.documents?.[0];
-    return (
-      <Link
-        href={doc ? `/editor/${doc.id}` : "#"}
-        className="rounded-xl border border-gray-200 bg-white p-5 hover:border-brand-500 hover:shadow-sm transition-all block"
-      >
-        <div className="flex items-start justify-between">
-          <h3 className="font-semibold truncate">{p.name}</h3>
-          <span className="text-[10px] uppercase tracking-wide rounded-full bg-gray-100 px-2 py-0.5 text-gray-500">
-            {m.role}
-          </span>
-        </div>
-        <p className="mt-1 text-sm text-gray-500 truncate">{doc?.title ?? "No document"}</p>
-        <p className="mt-3 text-xs text-gray-400">
-          Edited {doc ? new Date(doc.updated_at).toLocaleString() : "—"}
-        </p>
-      </Link>
-    );
-  }
-
   return (
-    <main className="min-h-screen">
-      <header className="border-b border-gray-200 bg-white">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/dashboard" className="flex items-center gap-2 font-bold">
-            <span className="text-brand-600">▦</span> ReportCanvas
+    <main className="min-h-screen bg-slate-50">
+      <header className="border-b border-slate-200 bg-white sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
+          <Link href="/dashboard" className="flex items-center gap-2.5 font-bold tracking-tight">
+            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white text-sm">▦</span>
+            ReportCanvas
           </Link>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span
                 className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white"
@@ -78,7 +74,7 @@ export default async function Dashboard() {
               >
                 {initials(profile?.full_name ?? "", profile?.email ?? "")}
               </span>
-              <span className="text-sm text-gray-600 hidden sm:block">{name}</span>
+              <span className="text-sm text-slate-600 hidden sm:block">{name}</span>
             </div>
             <SignOutButton />
           </div>
@@ -86,27 +82,47 @@ export default async function Dashboard() {
       </header>
 
       <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold">Your projects</h1>
-          <Link href="/upload" className="btn-primary">+ Upload HTML file</Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Your projects</h1>
+            <p className="text-sm text-slate-400 mt-0.5">
+              {mine.length} project{mine.length === 1 ? "" : "s"}
+              {shared.length > 0 && ` · ${shared.length} shared with you`}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <DemoButton />
+            <Link href="/upload" className="btn-primary">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+              Upload HTML
+            </Link>
+          </div>
         </div>
 
-        {mine.length === 0 ? (
-          <div className="mt-8 rounded-xl border-2 border-dashed border-gray-300 p-12 text-center">
-            <p className="text-gray-500">No projects yet.</p>
-            <Link href="/upload" className="btn-primary mt-4">Upload your first HTML report</Link>
+        {mine.length === 0 && shared.length === 0 ? (
+          <div className="mt-10 card border-2 border-dashed !border-slate-300 !shadow-none p-14 text-center bg-transparent">
+            <p className="text-4xl">📄</p>
+            <h2 className="mt-4 font-semibold text-slate-700">No projects yet</h2>
+            <p className="mt-1 text-sm text-slate-400 max-w-sm mx-auto">
+              Upload an HTML report generated by Claude, or try the built-in sample to
+              see how the editor works.
+            </p>
+            <div className="mt-6 flex justify-center gap-3">
+              <DemoButton />
+              <Link href="/upload" className="btn-primary">Upload your first report</Link>
+            </div>
           </div>
         ) : (
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {mine.map((m) => <Card key={m.projects!.id} m={m} />)}
+            {mine.map((p) => <ProjectCard key={p.projectId} p={p} />)}
           </div>
         )}
 
         {shared.length > 0 && (
           <>
-            <h2 className="mt-12 text-xl font-bold">Shared with you</h2>
-            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {shared.map((m) => <Card key={m.projects!.id} m={m} />)}
+            <h2 className="mt-12 text-lg font-bold text-slate-900">Shared with you</h2>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {shared.map((p) => <ProjectCard key={p.projectId} p={p} />)}
             </div>
           </>
         )}
