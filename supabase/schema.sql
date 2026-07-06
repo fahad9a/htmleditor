@@ -110,9 +110,12 @@ create policy "profiles readable by authenticated" on public.profiles
 create policy "profiles update own" on public.profiles
   for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
 
+-- Note: owner_id check is required (not just membership) because
+-- INSERT ... RETURNING evaluates this policy before the AFTER trigger
+-- inserts the owner's project_members row.
 create policy "projects select member" on public.projects
   for select to authenticated
-  using (public.get_project_role(id, auth.uid()) is not null);
+  using (owner_id = auth.uid() or public.get_project_role(id, auth.uid()) is not null);
 create policy "projects insert own" on public.projects
   for insert to authenticated with check (owner_id = auth.uid());
 create policy "projects update owner or editor" on public.projects
