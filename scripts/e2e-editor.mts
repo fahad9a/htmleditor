@@ -145,9 +145,34 @@ try {
   if (!out1.includes('var Wm="</body></html>"')) fail("report's own script corrupted");
   console.log("✓ export clean: edits kept, runtime stripped, embedded lib intact");
 
+  // comment pins: marks render as a floating layer, click posts back, export stays clean
+  await s1.send({ t: "comments", marks: [{ id: sel.el.id, count: 3 }] });
+  const frame = s1.page.frames().find((f) => f !== s1.page.mainFrame());
+  if (!frame) fail("iframe frame not found");
+  let pinText = "";
+  for (let i = 0; i < 30 && !pinText; i++) {
+    pinText = await frame.evaluate(
+      () => document.querySelector("#__vhe_pins .__vhe-pin")?.textContent ?? ""
+    );
+    if (!pinText) await new Promise((r) => setTimeout(r, 100));
+  }
+  if (pinText !== "3") fail(`comment pin not rendered (got "${pinText}")`);
+  await frame.evaluate(() =>
+    (document.querySelector("#__vhe_pins .__vhe-pin") as HTMLElement).click()
+  );
+  const cc = (await s1.waitFor("commentClick")) as { id: string };
+  if (cc.id !== sel.el.id) fail("commentClick posted wrong element id");
+  console.log("✓ comment pin rendered in overlay layer; click posts commentClick");
+
+  await s1.send({ t: "getHtml", reqId: "rp", print: false });
+  const outPins = ((await s1.waitFor("html", 1)) as { html: string }).html;
+  if (outPins.includes("__vhe_pins") || outPins.includes("__vhe-pin"))
+    fail("export leaked comment pins");
+  console.log("✓ export strips comment pins");
+
   // print variant: scripts removed
   await s1.send({ t: "getHtml", reqId: "r2", print: true });
-  const out2 = ((await s1.waitFor("html", 1)) as { html: string }).html;
+  const out2 = ((await s1.waitFor("html", 2)) as { html: string }).html;
   if (/<script/i.test(out2)) fail("print export should strip scripts");
   if (!out2.includes("EDITED TITLE")) fail("print export missing edits");
   console.log("✓ print export strips scripts, keeps edits");

@@ -49,19 +49,22 @@ function LoginForm() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
+    <main className="min-h-screen flex items-center justify-center px-4 relative overflow-hidden bg-white">
+      <div className="absolute inset-0 -z-10 aurora" />
+      <div className="w-full max-w-sm animate-fade-up">
         <Link href="/" className="flex items-center justify-center gap-2 font-bold text-xl mb-8">
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white text-sm">▦</span> ReportCanvas
+          <span className="logo-chip">▦</span> ReportCanvas
         </Link>
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex rounded-lg bg-slate-100 p-1 mb-6 text-sm font-medium">
+        <div className="rounded-2xl border border-slate-200 bg-white/90 backdrop-blur p-6 shadow-xl shadow-violet-100/60">
+          <div className="flex rounded-xl bg-slate-100 p-1 mb-6 text-sm font-medium">
             {(["login", "signup"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`flex-1 rounded-md py-1.5 ${
-                  mode === m ? "bg-white shadow text-slate-900" : "text-slate-500"
+                className={`flex-1 rounded-lg py-1.5 transition-all ${
+                  mode === m
+                    ? "bg-gradient-to-r from-violet-600 to-fuchsia-600 shadow text-white font-semibold"
+                    : "text-slate-500"
                 }`}
               >
                 {m === "login" ? "Log in" : "Sign up"}

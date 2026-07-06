@@ -97,10 +97,10 @@ export default function UploadPage() {
 
         {!html ? (
           <div
-            className={`mt-8 rounded-2xl border-2 border-dashed p-16 text-center cursor-pointer transition-all ${
+            className={`mt-8 rounded-2xl border-2 border-dashed p-16 text-center cursor-pointer transition-all duration-300 ${
               dragging
-                ? "border-indigo-500 bg-indigo-50 scale-[1.01]"
-                : "border-slate-300 bg-white hover:border-indigo-400"
+                ? "border-fuchsia-500 bg-gradient-to-br from-violet-50 to-fuchsia-50 scale-[1.02] shadow-xl shadow-fuchsia-100"
+                : "border-violet-300 bg-white hover:border-fuchsia-400 hover:shadow-lg hover:shadow-violet-100"
             }`}
             onClick={() => fileRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -112,7 +112,7 @@ export default function UploadPage() {
               if (f) readFile(f);
             }}
           >
-            <div className="mx-auto h-14 w-14 rounded-2xl bg-indigo-50 flex items-center justify-center text-2xl">📄</div>
+            <div className="mx-auto h-14 w-14 rounded-2xl bg-gradient-to-br from-violet-100 to-fuchsia-100 flex items-center justify-center text-2xl shadow-inner">📄</div>
             <p className="mt-4 font-semibold text-slate-700">Click to choose a file or drag it here</p>
             <p className="mt-1 text-sm text-slate-400">.html or .htm — any size</p>
             <input

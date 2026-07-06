@@ -10,6 +10,8 @@ interface Ops {
   hide: () => void;
   remove: () => void;
   selectEl: (id: string) => void;
+  uploadImage: (file: File) => Promise<string | null>;
+  insertImage: (url: string) => void;
 }
 
 interface Props {
@@ -44,22 +46,39 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export default function InspectorPanel({ selected, canEdit, ops }: Props) {
   const [text, setText] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     setText(selected?.text ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id]);
 
+  async function replaceWithUpload(file: File) {
+    setUploading(true);
+    const url = await ops.uploadImage(file);
+    if (url) ops.attr("src", url);
+    setUploading(false);
+  }
+
+  async function insertUpload(file: File) {
+    setUploading(true);
+    const url = await ops.uploadImage(file);
+    if (url) ops.insertImage(url);
+    setUploading(false);
+  }
+
   if (!selected) {
     return (
-      <aside className="w-72 shrink-0 border-l border-slate-200 bg-white flex flex-col items-center justify-center p-8 text-center">
-        <div className="h-12 w-12 rounded-2xl bg-indigo-50 flex items-center justify-center text-xl">👆</div>
-        <p className="mt-4 text-sm font-medium text-slate-700">Select an element</p>
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+        <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-violet-100 to-fuchsia-100 flex items-center justify-center text-2xl shadow-inner">
+          👆
+        </div>
+        <p className="mt-4 text-sm font-semibold text-slate-700">Select an element</p>
         <p className="mt-1.5 text-xs text-slate-400 leading-relaxed">
           Click anything in the document to edit its text, colors and layout.
           Double-click text to edit it in place.
         </p>
-      </aside>
+      </div>
     );
   }
 
@@ -67,7 +86,7 @@ export default function InspectorPanel({ selected, canEdit, ops }: Props) {
   const disabled = !canEdit;
 
   return (
-    <aside className="w-72 shrink-0 border-l border-slate-200 bg-white overflow-y-auto">
+    <div className="flex-1 overflow-y-auto">
       {/* breadcrumb path */}
       <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50/60">
         <div className="flex flex-wrap items-center gap-1 text-[11px]">
@@ -77,7 +96,7 @@ export default function InspectorPanel({ selected, canEdit, ops }: Props) {
               <button
                 className={
                   p.id === selected.id
-                    ? "font-bold text-indigo-600"
+                    ? "font-bold text-violet-600"
                     : "text-slate-400 hover:text-slate-700"
                 }
                 onClick={() => ops.selectEl(p.id)}
@@ -154,7 +173,7 @@ export default function InspectorPanel({ selected, canEdit, ops }: Props) {
                 title={a}
                 className={`flex-1 rounded-lg border px-2 py-1.5 text-xs transition-colors ${
                   s.textAlign === a
-                    ? "border-indigo-500 bg-indigo-50 text-indigo-600"
+                    ? "border-violet-500 bg-violet-50 text-violet-600"
                     : "border-slate-200 text-slate-500 hover:bg-slate-50"
                 }`}
                 onClick={() => ops.style("textAlign", a)}
@@ -267,20 +286,38 @@ export default function InspectorPanel({ selected, canEdit, ops }: Props) {
             />
           </div>
           <div>
-            <label className="label">Replace with file</label>
+            <label className="label">Replace with a picture</label>
+            <label
+              className={`flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-3 py-3 text-xs font-semibold transition-colors ${
+                disabled || uploading
+                  ? "border-slate-200 text-slate-300"
+                  : "border-violet-300 text-violet-600 hover:border-violet-500 hover:bg-violet-50 cursor-pointer"
+              }`}
+            >
+              {uploading ? "Uploading…" : "📷 Upload picture"}
+              <input
+                type="file"
+                accept="image/*"
+                disabled={disabled || uploading}
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) replaceWithUpload(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          <div>
+            <label className="label">Width %</label>
             <input
-              type="file"
-              accept="image/*"
+              className="w-full accent-violet-600"
+              type="range"
+              min={10}
+              max={100}
               disabled={disabled}
-              className="text-xs w-full"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                const reader = new FileReader();
-                // Data URL keeps the export a single self-contained file.
-                reader.onload = () => ops.attr("src", String(reader.result));
-                reader.readAsDataURL(f);
-              }}
+              defaultValue={100}
+              onChange={(e) => ops.style("width", `${e.target.value}%`)}
             />
           </div>
           <div>
@@ -292,6 +329,32 @@ export default function InspectorPanel({ selected, canEdit, ops }: Props) {
               onBlur={(e) => ops.attr("alt", e.target.value)}
             />
           </div>
+        </Section>
+      )}
+
+      {canEdit && selected.tag !== "img" && (
+        <Section title="Insert picture">
+          <label
+            className={`flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-3 py-3 text-xs font-semibold transition-colors ${
+              uploading
+                ? "border-slate-200 text-slate-300"
+                : "border-violet-300 text-violet-600 hover:border-violet-500 hover:bg-violet-50 cursor-pointer"
+            }`}
+          >
+            {uploading ? "Uploading…" : "📷 Upload into selection"}
+            <input
+              type="file"
+              accept="image/*"
+              disabled={uploading}
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) insertUpload(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <p className="text-[10px] text-slate-400">Adds the picture inside the selected element.</p>
         </Section>
       )}
 
@@ -319,6 +382,6 @@ export default function InspectorPanel({ selected, canEdit, ops }: Props) {
           </button>
         </div>
       )}
-    </aside>
+    </div>
   );
 }

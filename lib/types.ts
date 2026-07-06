@@ -91,3 +91,17 @@ export interface Collaborator {
   color: string;
   selectedId: string | null;
 }
+
+// A comment thread entry. element_id anchors it to a data-vhe-id in the
+// document (null = comment on the whole document); parent_id makes it a reply.
+export interface CommentRow {
+  id: string;
+  document_id: string;
+  element_id: string | null;
+  parent_id: string | null;
+  author_id: string;
+  body: string;
+  resolved: boolean;
+  created_at: string;
+  profiles?: Profile | null;
+}

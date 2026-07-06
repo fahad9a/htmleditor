@@ -5,8 +5,10 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { injectEditorRuntime, makeToken } from "@/lib/editorRuntime";
 import { userColor } from "@/lib/colors";
+import { uploadImage } from "@/lib/storage";
 import type {
   Collaborator,
+  CommentRow,
   DocumentRow,
   Member,
   PatchOp,
@@ -19,6 +21,7 @@ import type {
 import TopBar from "./TopBar";
 import SlidesSidebar from "./SlidesSidebar";
 import InspectorPanel from "./InspectorPanel";
+import CommentsPanel from "./CommentsPanel";
 import ShareModal from "./ShareModal";
 import VersionsModal from "./VersionsModal";
 
@@ -65,6 +68,9 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
   const [shareOpen, setShareOpen] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [comments, setComments] = useState<CommentRow[]>([]);
+  const [rightTab, setRightTab] = useState<"design" | "comments">("design");
+  const [focusCommentEl, setFocusCommentEl] = useState<string | null>(null);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const patchesRef = useRef<PatchOp[]>(doc.patches ?? []);
@@ -90,6 +96,73 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
     setToast(msg);
     setTimeout(() => setToast(""), 2600);
   }, []);
+
+  // ---- comments ----
+  const fetchComments = useCallback(async () => {
+    const { data } = await supabase
+      .from("comments")
+      .select("*, profiles:author_id(id, email, full_name, avatar_url)")
+      .eq("document_id", doc.id)
+      .order("created_at", { ascending: true });
+    setComments((data as unknown as CommentRow[]) ?? []);
+  }, [doc.id, supabase]);
+
+  useEffect(() => {
+    fetchComments();
+  }, [fetchComments]);
+
+  // Pins in the document: unresolved threads grouped by anchored element.
+  useEffect(() => {
+    if (!booted) return;
+    const roots = comments.filter((c) => !c.parent_id && !c.resolved && c.element_id);
+    const counts = new Map<string, number>();
+    for (const r of roots) {
+      const replies = comments.filter((c) => c.parent_id === r.id).length;
+      counts.set(r.element_id!, (counts.get(r.element_id!) ?? 0) + 1 + replies);
+    }
+    postToFrame({
+      t: "comments",
+      marks: Array.from(counts, ([id, count]) => ({ id, count })),
+    });
+  }, [booted, comments, postToFrame]);
+
+  const notifyComments = useCallback(() => {
+    channelRef.current?.send({ type: "broadcast", event: "comments", payload: { by: me.id } });
+  }, [me.id]);
+
+  const addComment = useCallback(
+    async (body: string, elementId: string | null, parentId: string | null) => {
+      const { error } = await supabase.from("comments").insert({
+        document_id: doc.id,
+        element_id: elementId,
+        parent_id: parentId,
+        author_id: me.id,
+        body,
+      });
+      if (error) return showToast(`Comment failed: ${error.message}`);
+      await fetchComments();
+      notifyComments();
+    },
+    [doc.id, fetchComments, me.id, notifyComments, showToast, supabase]
+  );
+
+  const resolveComment = useCallback(
+    async (id: string, resolved: boolean) => {
+      await supabase.from("comments").update({ resolved, updated_at: new Date().toISOString() }).eq("id", id);
+      await fetchComments();
+      notifyComments();
+    },
+    [fetchComments, notifyComments, supabase]
+  );
+
+  const deleteComment = useCallback(
+    async (id: string) => {
+      await supabase.from("comments").delete().eq("id", id);
+      await fetchComments();
+      notifyComments();
+    },
+    [fetchComments, notifyComments, supabase]
+  );
 
   // ---- saving (compact patch log, not the document) ----
   const doSave = useCallback(
@@ -271,6 +344,11 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
           }
           break;
         }
+        case "commentClick":
+          setRightTab("comments");
+          setFocusCommentEl(m.id ?? null);
+          setTimeout(() => setFocusCommentEl(null), 2400);
+          break;
         case "key":
           if (m.k === "s") doSave(true);
           else if (m.k === "z" && m.shift) redo();
@@ -313,6 +391,10 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
         // Apply the collaborator's edit directly — no reload, no flicker.
         postToFrame({ t: "op", o: payload.op, meta: { remote: true } });
       })
+      .on("broadcast", { event: "comments" }, ({ payload }) => {
+        if (payload.by === me.id) return;
+        fetchComments();
+      })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED") {
           await channel.track({
@@ -327,7 +409,7 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
       supabase.removeChannel(channel);
       channelRef.current = null;
     };
-  }, [doc.id, me, postToFrame, supabase]);
+  }, [doc.id, fetchComments, me, postToFrame, supabase]);
 
   // parent-window keyboard shortcuts (iframe forwards its own)
   useEffect(() => {
@@ -371,8 +453,27 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
       },
       selectEl: (id: string) => postToFrame({ t: "select", id }),
       focusSlide: (id: string) => postToFrame({ t: "focusSlide", id }),
+      uploadImage: async (file: File) => {
+        const res = await uploadImage(supabase, doc.id, file);
+        if ("error" in res) {
+          showToast(`Upload failed: ${res.error}`);
+          return null;
+        }
+        return res.url;
+      },
+      insertImage: (url: string) => {
+        if (!selected) return;
+        // Reuse the restore op: it inserts arbitrary HTML at parent+index
+        // (index past the end appends), with a computed "remove" inverse.
+        sendOp({
+          op: "restore",
+          parentId: selected.id,
+          index: 9999,
+          html: `<img src="${url}" alt="" style="max-width:100%;height:auto;border-radius:8px;">`,
+        });
+      },
     }),
-    [postToFrame, selected, sendOp, slides]
+    [doc.id, postToFrame, selected, sendOp, showToast, slides, supabase]
   );
 
   // ---- export ----
@@ -434,6 +535,8 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
     [scheduleAutosave]
   );
 
+  const openCommentCount = comments.filter((c) => !c.parent_id && !c.resolved).length;
+
   return (
     <div className="h-screen flex flex-col bg-slate-100">
       <TopBar
@@ -473,7 +576,7 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
           {!booted && (
             <div className="absolute inset-0 flex items-center justify-center z-10">
               <div className="flex items-center gap-3 rounded-xl bg-white px-5 py-3 shadow-lg border border-slate-200">
-                <span className="h-4 w-4 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+                <span className="h-4 w-4 rounded-full border-2 border-fuchsia-500 border-t-transparent animate-spin" />
                 <span className="text-sm text-slate-600">Loading document…</span>
               </div>
             </div>
@@ -497,7 +600,45 @@ export default function EditorShell({ document: doc, projectId, projectName, mem
           </div>
         </div>
 
-        <InspectorPanel selected={selected} canEdit={canEdit} ops={ops} />
+        <aside className="w-72 shrink-0 border-l border-slate-200 bg-white flex flex-col min-h-0">
+          <div className="flex gap-1 p-2 border-b border-slate-100">
+            {(
+              [
+                ["design", "🎨 Design"],
+                ["comments", `💬 Comments${openCommentCount ? ` (${openCommentCount})` : ""}`],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition-all ${
+                  rightTab === key
+                    ? key === "comments"
+                      ? "bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-sm"
+                      : "bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-sm"
+                    : "text-slate-500 hover:bg-slate-100"
+                }`}
+                onClick={() => setRightTab(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {rightTab === "design" ? (
+            <InspectorPanel selected={selected} canEdit={canEdit} ops={ops} />
+          ) : (
+            <CommentsPanel
+              comments={comments}
+              me={me}
+              myRole={myRole}
+              selected={selected}
+              focusElementId={focusCommentEl}
+              onAdd={addComment}
+              onResolve={resolveComment}
+              onDelete={deleteComment}
+              onJump={(id) => postToFrame({ t: "flash", id })}
+            />
+          )}
+        </aside>
       </div>
 
       {toast && (

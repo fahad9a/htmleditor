@@ -9,34 +9,33 @@ Built with **Next.js 15 (App Router, TypeScript, Tailwind)**, **Supabase**
 
 ---
 
-## Features (V1)
+## Features
 
 | Area | What you get |
 |---|---|
 | Accounts | Email/password auth (Supabase), auto-created profiles, avatars-by-initials |
 | Upload | Drag & drop any `.html` file, live sandboxed preview, becomes a project |
-| Visual editing | Click any element → edit text, font size/weight/family, alignment, colors, background, padding, margin, borders, radius, image src/alt (URL or file), links, hide/show, delete. Double-click text to edit in place. The original markup is preserved — edits are applied to the real DOM, never regenerated. |
+| Visual editing | Click any element → edit text, font size/weight/family, alignment, colors, background, padding, margin, borders, radius, image src/alt, links, hide/show, delete. Double-click text to edit in place. The original markup is immutable — edits are compact patch ops replayed on load, never regenerated. |
+| Pictures | Upload photos/figures to Supabase Storage from the inspector: replace any existing image, insert a new picture into the selected element, resize with a width slider. Patches store the URL (tiny), the bucket serves the bytes. |
+| Comments | Threaded comments pinned to any element (or the whole document): reply, resolve/reopen, delete. Orange pins with counts float over the document; click a pin to open the thread, click "Show in document" to flash the element. Live-synced to everyone in the doc. |
 | Slides | Auto-detects slides (`data-vhe-slide`, `body > section`, `class*="slide"`); manual "mark as slide"; add / delete / duplicate / reorder / rename; click to jump |
 | Transitions | PowerPoint-style: none / fade / slide left / slide right / zoom + duration & delay, applied in Preview mode |
-| Collaboration | Presence avatars, live remote-selection outlines, autosave + live sync via Supabase Realtime, last-write-wins conflict handling, "last edited by" |
-| Sharing | Invite by email with **owner / editor / viewer** roles, change roles, remove members |
+| Collaboration | Presence avatars, live remote-selection outlines, ops broadcast live over Supabase Realtime (no reloads), autosave, "last edited by" |
+| Sharing | Invite by email with **owner / editor / viewer** roles, change roles, remove members. Viewers can comment. |
 | Versions | Snapshot on every manual save, view + restore any version, who/when |
-| Export | HTML file, ZIP package, PDF via print dialog. **PPTX is not supported** — faithful HTML→PPTX conversion isn't realistic; export PDF and import into PowerPoint instead. |
+| Export | HTML file, ZIP package, PDF via print dialog. Comment pins and editor runtime are stripped from exports. **PPTX is not supported** — export PDF and import into PowerPoint instead. |
 | Security | Uploaded HTML runs in a sandboxed iframe (`allow-scripts`, opaque origin) — it cannot touch the app origin, cookies, or your Supabase session. postMessage traffic is verified with a per-mount token. RLS restricts every table to project members. |
 
-### Honest V1 limitations
-- **Collaboration is near-real-time, not CRDT.** Edits sync through debounced
-  autosaves + Realtime notifications (~2s). Two people editing the *same
-  element* simultaneously → last write wins (you're warned via toast). True
-  Google-Docs merging is V2.
-- **Remote updates reload the preview iframe** (scroll position is restored).
+### Honest limitations
+- **Conflicts are last-write-wins**, not CRDT-merged. Ops broadcast live
+  (sub-second), so overlap is rare, but two people typing into the *same*
+  element simultaneously → last write wins.
 - **PDF export** uses the browser print dialog (choose "Save as PDF").
 
-### V2 ideas
-CRDT/OT element-level merging · per-slide transitions · comments & mentions ·
-email invites for non-users · Supabase Storage for images · PPTX export via
-per-slide rasterization · templates · AI-assisted editing · undo/redo stack ·
-public share links.
+### Future ideas
+CRDT/OT element-level merging · per-slide transitions · @mentions in comments ·
+email invites for non-users · PPTX export via per-slide rasterization ·
+templates · AI-assisted editing · public share links.
 
 ---
 
@@ -53,9 +52,11 @@ Browser ──► Next.js (Vercel)
 └──► Supabase
      ├ Auth (email/password, @supabase/ssr cookie sessions)
      ├ Postgres + RLS: profiles, projects, project_members, documents,
-     │                  document_versions, activity_log
+     │                  document_versions, activity_log, comments
+     ├ Storage: "report-images" public bucket (pictures uploaded from the editor)
      └ Realtime channel per document: presence (who's online, what's selected)
-                                      + broadcast "saved" → peers refetch
+                                      + broadcast "op" (live edits, no reload)
+                                      + broadcast "comments" → peers refetch
 ```
 
 **Why this editing model?** The uploaded HTML is rendered *as-is* in an iframe;
@@ -118,5 +119,11 @@ Or connect the GitHub repo in the Vercel dashboard for deploy-on-push.
       remote selection outlines appear; edits sync within ~2s
 - [ ] Viewer role: no editing controls
 - [ ] Save → version appears in History; restore works
-- [ ] Export HTML/ZIP/PDF
+- [ ] Select an element → Comments tab → comment lands with a pin on the element;
+      account #2 sees it live, replies, resolves
+- [ ] Select an image → upload a picture → replaced everywhere (and for peers)
+- [ ] "Insert picture" into a selected container → image appears, undo removes it
+- [ ] Export HTML/ZIP/PDF (no pins, no runtime in the file)
 - [ ] Refresh mid-edit → warned; content persisted after autosave
+
+Automated browser E2E for the runtime: `npx tsx scripts/e2e-editor.mts`

@@ -75,8 +75,25 @@ export default function ProjectCard({ p }: { p: ProjectCardData }) {
     router.refresh();
   }
 
+  // Deterministic per-project accent so the dashboard feels colorful but stable.
+  const GRADS = [
+    "from-violet-500 to-fuchsia-500",
+    "from-fuchsia-500 to-pink-500",
+    "from-amber-500 to-orange-500",
+    "from-emerald-500 to-teal-500",
+    "from-sky-500 to-indigo-500",
+    "from-rose-500 to-red-500",
+  ];
+  let h = 0;
+  for (let i = 0; i < p.projectId.length; i++) h = (h * 31 + p.projectId.charCodeAt(i)) >>> 0;
+  const grad = GRADS[h % GRADS.length];
+
   return (
-    <div className={`card p-5 hover:border-indigo-300 hover:shadow-md transition-all relative ${busy ? "opacity-50" : ""}`}>
+    <div
+      className={`card overflow-hidden p-0 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-violet-100 transition-all duration-300 relative ${busy ? "opacity-50" : ""}`}
+    >
+      <div className={`h-1.5 bg-gradient-to-r ${grad}`} />
+      <div className="p-5">
       <div className="flex items-start justify-between gap-2">
         <Link href={p.docId ? `/editor/${p.docId}` : "#"} className="min-w-0 flex-1">
           <h3 className="font-semibold truncate text-slate-900">{p.name}</h3>
@@ -114,6 +131,7 @@ export default function ProjectCard({ p }: { p: ProjectCardData }) {
           Edited {p.updatedAt ? new Date(p.updatedAt).toLocaleString() : "—"}
         </p>
       </Link>
+      </div>
     </div>
   );
 }

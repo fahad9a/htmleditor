@@ -34,7 +34,7 @@ export default function TopBar(p: Props) {
   const [exportOpen, setExportOpen] = useState(false);
 
   return (
-    <header className="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 z-20">
+    <header className="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 z-20 shadow-[0_1px_0_rgba(139,92,246,.15)]">
       <Link
         href="/dashboard"
         className="btn-icon shrink-0"
@@ -48,7 +48,7 @@ export default function TopBar(p: Props) {
         <h1 className="font-semibold text-sm truncate leading-tight">{p.title}</h1>
         <p className="text-[11px] text-slate-400 truncate leading-tight">
           {p.saving ? (
-            <span className="text-indigo-500">Saving…</span>
+            <span className="text-fuchsia-500">Saving…</span>
           ) : p.dirty ? (
             "Unsaved changes"
           ) : p.lastSaved ? (

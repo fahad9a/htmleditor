@@ -6,20 +6,38 @@
   html {
     font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   }
+  ::selection {
+    @apply bg-fuchsia-200 text-fuchsia-900;
+  }
+  /* slim colorful scrollbars for the editor panels */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #c4b5fd transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-violet-200 hover:bg-violet-300;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 disabled:pointer-events-none transition-colors;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-violet-500/25 hover:shadow-lg hover:shadow-violet-500/35 hover:brightness-110 active:brightness-95 disabled:opacity-50 disabled:pointer-events-none transition-all duration-200;
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50 disabled:pointer-events-none transition-colors;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-violet-300 hover:text-violet-700 hover:bg-violet-50/60 active:bg-violet-100 disabled:opacity-50 disabled:pointer-events-none transition-all duration-200;
   }
   .btn-icon {
-    @apply inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-40 disabled:pointer-events-none transition-colors;
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-violet-50 hover:text-violet-700 disabled:opacity-40 disabled:pointer-events-none transition-colors;
   }
   .input {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:bg-slate-50 disabled:text-slate-400;
+    @apply w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:bg-slate-50 disabled:text-slate-400 transition-colors;
   }
   .label {
     @apply block text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1;
@@ -29,5 +47,60 @@
   }
   .modal-backdrop {
     @apply fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4;
+  }
+  /* app logo chip */
+  .logo-chip {
+    @apply flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 via-fuchsia-500 to-amber-400 text-white text-sm shadow-md shadow-fuchsia-500/30;
+  }
+  /* gradient headline text */
+  .text-gradient {
+    @apply bg-gradient-to-r from-violet-600 via-fuchsia-500 to-amber-500 bg-clip-text text-transparent;
+  }
+  /* soft animated aurora background (landing / login / dashboard header) */
+  .aurora {
+    background:
+      radial-gradient(40% 45% at 15% 20%, rgba(139, 92, 246, 0.18) 0%, transparent 100%),
+      radial-gradient(35% 40% at 85% 15%, rgba(217, 70, 239, 0.16) 0%, transparent 100%),
+      radial-gradient(45% 50% at 60% 90%, rgba(245, 158, 11, 0.12) 0%, transparent 100%);
+    background-size: 180% 180%;
+    animation: aurora-drift 14s ease-in-out infinite alternate;
+  }
+}
+
+@layer utilities {
+  .animate-fade-up {
+    animation: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .animate-pop {
+    animation: pop 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+@keyframes aurora-drift {
+  from {
+    background-position: 0% 0%;
+  }
+  to {
+    background-position: 100% 100%;
+  }
+}
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }

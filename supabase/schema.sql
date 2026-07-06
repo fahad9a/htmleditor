@@ -164,3 +164,48 @@ create policy "activity select member" on public.activity_log
 create policy "activity insert member" on public.activity_log
   for insert to authenticated
   with check (public.get_project_role(project_id, auth.uid()) is not null and user_id = auth.uid());
+
+-- ============ COMMENTS ============
+-- (applied as migration "comments_and_image_storage")
+create table public.comments (
+  id uuid primary key default gen_random_uuid(),
+  document_id uuid not null references public.documents(id) on delete cascade,
+  element_id text,                                   -- data-vhe-id anchor; null = document-level
+  parent_id uuid references public.comments(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null,
+  resolved boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index comments_document_idx on public.comments (document_id, created_at);
+alter table public.comments enable row level security;
+
+create policy "comments select member" on public.comments
+  for select to authenticated
+  using (public.get_doc_role(document_id, auth.uid()) is not null);
+create policy "comments insert member" on public.comments
+  for insert to authenticated
+  with check (public.get_doc_role(document_id, auth.uid()) is not null and author_id = auth.uid());
+create policy "comments update author" on public.comments
+  for update to authenticated using (author_id = auth.uid());
+create policy "comments update editor" on public.comments
+  for update to authenticated
+  using (public.get_doc_role(document_id, auth.uid()) in ('owner','editor'));
+create policy "comments delete author or owner" on public.comments
+  for delete to authenticated
+  using (author_id = auth.uid() or public.get_doc_role(document_id, auth.uid()) = 'owner');
+
+-- ============ IMAGE STORAGE ============
+-- Public bucket for pictures uploaded from the editor (patches store the URL).
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('report-images', 'report-images', true, 10485760,
+        array['image/png','image/jpeg','image/gif','image/webp','image/svg+xml','image/avif'])
+on conflict (id) do nothing;
+
+create policy "report images insert authenticated" on storage.objects
+  for insert to authenticated with check (bucket_id = 'report-images');
+create policy "report images select all" on storage.objects
+  for select using (bucket_id = 'report-images');
+create policy "report images delete own" on storage.objects
+  for delete to authenticated using (bucket_id = 'report-images' and owner = auth.uid());

@@ -41,7 +41,7 @@ export default function SlidesSidebar({ slides, selectedId, canEdit, transitions
         </h2>
         {canEdit && (
           <button
-            className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
+            className="text-xs text-violet-600 hover:text-fuchsia-600 font-bold transition-colors"
             onClick={() => ops.slide("add")}
           >
             + Add
@@ -56,9 +56,9 @@ export default function SlidesSidebar({ slides, selectedId, canEdit, transitions
         {slides.map((s, i) => (
           <div
             key={s.id}
-            className={`group mx-2 mb-1 rounded-xl px-3 py-2 cursor-pointer text-sm transition-colors ${
+            className={`group mx-2 mb-1 rounded-xl px-3 py-2 cursor-pointer text-sm transition-all ${
               active === s.id
-                ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100"
+                ? "bg-gradient-to-r from-violet-50 to-fuchsia-50 text-violet-700 ring-1 ring-violet-200"
                 : "hover:bg-slate-50"
             }`}
             onClick={() => {
@@ -85,7 +85,7 @@ export default function SlidesSidebar({ slides, selectedId, canEdit, transitions
               />
             ) : (
               <div className="flex items-center gap-2">
-                <span className={`text-[10px] w-4 ${active === s.id ? "text-indigo-400" : "text-slate-300"}`}>
+                <span className={`text-[10px] w-4 ${active === s.id ? "text-fuchsia-400" : "text-slate-300"}`}>
                   {i + 1}
                 </span>
                 <span className="truncate flex-1 font-medium">{s.name}</span>

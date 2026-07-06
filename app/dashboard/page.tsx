@@ -59,10 +59,10 @@ export default async function Dashboard() {
 
   return (
     <main className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white sticky top-0 z-10">
+      <header className="border-b border-slate-200 bg-white/85 backdrop-blur sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
           <Link href="/dashboard" className="flex items-center gap-2.5 font-bold tracking-tight">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white text-sm">▦</span>
+            <span className="logo-chip">▦</span>
             ReportCanvas
           </Link>
           <div className="flex items-center gap-3">
@@ -81,26 +81,34 @@ export default async function Dashboard() {
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Your projects</h1>
-            <p className="text-sm text-slate-400 mt-0.5">
+      {/* gradient hero band */}
+      <div className="bg-gradient-to-r from-violet-600 via-fuchsia-600 to-amber-500">
+        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-wrap items-center justify-between gap-3">
+          <div className="animate-fade-up">
+            <h1 className="text-2xl font-extrabold tracking-tight text-white">
+              Welcome back{profile?.full_name ? `, ${profile.full_name.split(" ")[0]}` : ""} 👋
+            </h1>
+            <p className="text-sm text-white/80 mt-0.5">
               {mine.length} project{mine.length === 1 ? "" : "s"}
               {shared.length > 0 && ` · ${shared.length} shared with you`}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 animate-fade-up [animation-delay:100ms]">
             <DemoButton />
-            <Link href="/upload" className="btn-primary">
+            <Link
+              href="/upload"
+              className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-bold text-fuchsia-700 shadow-lg hover:scale-[1.03] active:scale-100 transition-transform"
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
               Upload HTML
             </Link>
           </div>
         </div>
+      </div>
 
+      <div className="max-w-6xl mx-auto px-6 py-8">
         {mine.length === 0 && shared.length === 0 ? (
-          <div className="mt-10 card border-2 border-dashed !border-slate-300 !shadow-none p-14 text-center bg-transparent">
+          <div className="mt-2 card border-2 border-dashed !border-violet-200 !shadow-none p-14 text-center bg-transparent animate-fade-up">
             <p className="text-4xl">📄</p>
             <h2 className="mt-4 font-semibold text-slate-700">No projects yet</h2>
             <p className="mt-1 text-sm text-slate-400 max-w-sm mx-auto">
@@ -113,16 +121,27 @@ export default async function Dashboard() {
             </div>
           </div>
         ) : (
-          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {mine.map((p) => <ProjectCard key={p.projectId} p={p} />)}
-          </div>
+          <>
+            <h2 className="text-lg font-bold text-slate-900">Your projects</h2>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {mine.map((p, i) => (
+                <div key={p.projectId} className="animate-fade-up" style={{ animationDelay: `${i * 60}ms` }}>
+                  <ProjectCard p={p} />
+                </div>
+              ))}
+            </div>
+          </>
         )}
 
         {shared.length > 0 && (
           <>
             <h2 className="mt-12 text-lg font-bold text-slate-900">Shared with you</h2>
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {shared.map((p) => <ProjectCard key={p.projectId} p={p} />)}
+              {shared.map((p, i) => (
+                <div key={p.projectId} className="animate-fade-up" style={{ animationDelay: `${i * 60}ms` }}>
+                  <ProjectCard p={p} />
+                </div>
+              ))}
             </div>
           </>
         )}

@@ -190,8 +190,68 @@ const EDITOR_SOURCE = String.raw`
       ".__vhe-sel{outline:2px solid #6366f1!important;outline-offset:-2px;}" +
       ".__vhe-remote{outline:2px solid var(--vhe-rc,#f59e0b)!important;outline-offset:-2px;}" +
       "[data-vhe-hidden]{opacity:.3!important;outline:1px dashed #ef4444!important;}" +
-      "[contenteditable=true]{outline:2px solid #10b981!important;outline-offset:-2px;cursor:text;}";
+      "[contenteditable=true]{outline:2px solid #10b981!important;outline-offset:-2px;cursor:text;}" +
+      ".__vhe-flash{outline:3px solid #f59e0b!important;outline-offset:-3px;transition:outline-color .3s;}" +
+      "#__vhe_pins{position:absolute;top:0;left:0;width:100%;height:0;z-index:2147483000;pointer-events:none;}" +
+      "#__vhe_pins .__vhe-pin{position:absolute;pointer-events:auto;cursor:pointer;display:flex;align-items:center;" +
+      "justify-content:center;min-width:22px;height:22px;padding:0 5px;border-radius:11px 11px 11px 3px;" +
+      "background:linear-gradient(135deg,#f59e0b,#f97316);color:#fff;font:700 11px/1 system-ui,sans-serif;" +
+      "box-shadow:0 2px 8px rgba(249,115,22,.45);border:2px solid #fff;transform:translate(-50%,-100%);}" +
+      "#__vhe_pins .__vhe-pin:hover{transform:translate(-50%,-100%) scale(1.15);}";
     document.head.appendChild(s);
+  }
+
+  // ---------- comment pins (floating layer outside <body>: never gets a
+  // vhe id, stripped on export) ----------
+  var commentMarks = [];
+  function pinsLayer() {
+    var layer = document.getElementById("__vhe_pins");
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = "__vhe_pins";
+      document.documentElement.appendChild(layer);
+    }
+    return layer;
+  }
+  function updatePins() {
+    var layer = pinsLayer();
+    layer.innerHTML = "";
+    for (var i = 0; i < commentMarks.length; i++) {
+      (function (mark) {
+        var el = byId(mark.id);
+        if (!el) return;
+        var r = el.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) return;
+        var pin = document.createElement("div");
+        pin.className = "__vhe-pin";
+        pin.textContent = String(mark.count);
+        pin.title = mark.count + " comment" + (mark.count === 1 ? "" : "s");
+        pin.style.left = r.right + window.scrollX - 6 + "px";
+        pin.style.top = r.top + window.scrollY + 6 + "px";
+        pin.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          post({ t: "commentClick", id: mark.id });
+        });
+        layer.appendChild(pin);
+      })(commentMarks[i]);
+    }
+  }
+  var pinTimer = null;
+  function schedulePins() {
+    clearTimeout(pinTimer);
+    pinTimer = setTimeout(updatePins, 120);
+  }
+  window.addEventListener("resize", schedulePins);
+  // Late-rendering charts shift layout without any event we can hook — keep
+  // pins glued to their elements with a cheap periodic re-measure.
+  setInterval(function () { if (commentMarks.length) updatePins(); }, 2500);
+
+  function flashEl(id) {
+    var el = byId(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("__vhe-flash");
+    setTimeout(function () { el.classList.remove("__vhe-flash"); }, 1600);
   }
 
   function sendSlides() {
@@ -267,7 +327,7 @@ const EDITOR_SOURCE = String.raw`
   // ---------- serialization ----------
   function serialize(print) {
     var clone = document.documentElement.cloneNode(true);
-    var i, kill = clone.querySelectorAll("#__vhe_style, #__vhe_runtime");
+    var i, kill = clone.querySelectorAll("#__vhe_style, #__vhe_runtime, #__vhe_pins");
     for (i = 0; i < kill.length; i++) kill[i].parentNode.removeChild(kill[i]);
     if (print) {
       // Freeze canvases into images and drop scripts so the file prints
@@ -292,6 +352,7 @@ const EDITOR_SOURCE = String.raw`
       el.removeAttribute("contenteditable");
       el.classList.remove("__vhe-sel");
       el.classList.remove("__vhe-remote");
+      el.classList.remove("__vhe-flash");
       if (!el.getAttribute("class")) el.removeAttribute("class");
       if (el.hasAttribute("data-vhe-hidden")) {
         el.removeAttribute("data-vhe-hidden");
@@ -305,6 +366,8 @@ const EDITOR_SOURCE = String.raw`
   document.addEventListener("click", function (e) {
     var t = e.target;
     if (t && t.isContentEditable) return;
+    // Comment pins live outside the document flow — let their own handler run.
+    if (t && t.closest && t.closest("#__vhe_pins")) return;
     e.preventDefault();
     e.stopPropagation();
     var el = t && t.closest ? t.closest("[data-vhe-id]") : null;
@@ -372,7 +435,13 @@ const EDITOR_SOURCE = String.raw`
         post({ t: "applied", op: m.o, inverse: inv, meta: m.meta || {} });
         if (isStructural(m.o)) { sendSlides(); }
         refreshSelected();
+        schedulePins();
       }
+    } else if (m.t === "comments") {
+      commentMarks = m.marks || [];
+      schedulePins();
+    } else if (m.t === "flash") {
+      flashEl(m.id);
     } else if (m.t === "select") {
       select(byId(m.id));
     } else if (m.t === "focusSlide") {
